@@ -57,9 +57,6 @@ to `true`.
 [public]
 proxy_protocol = true
 
-[public]
-proxy_protocol = true
-
 [server]
 send_proxy_v2 = true
 
