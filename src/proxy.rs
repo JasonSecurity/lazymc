@@ -5,10 +5,53 @@ use bytes::BytesMut;
 use proxy_protocol::version2::{ProxyAddresses, ProxyCommand, ProxyTransportProtocol};
 use proxy_protocol::EncodeError;
 use tokio::io;
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
 use crate::net;
+
+
+/// Read and validate an incoming HAProxy PROXY protocol v2 header.
+pub async fn read_proxy_v2(inbound: &mut TcpStream) -> io::Result<(SocketAddr, SocketAddr)> {
+    const SIG: [u8; 12] = [13,10,13,10,0,13,10,81,85,73,84,10];
+    let mut h = [0u8; 16];
+    inbound.read_exact(&mut h).await?;
+    if h[..12] != SIG || h[12] != 0x21 {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "invalid PROXY v2 signature/command"));
+    }
+    let family = h[13];
+    let len = u16::from_be_bytes([h[14],h[15]]) as usize;
+    if len > 4096 { return Err(io::Error::new(io::ErrorKind::InvalidData, "PROXY v2 payload too large")); }
+    let mut p = vec![0u8;len];
+    inbound.read_exact(&mut p).await?;
+    match family {
+        0x11 if len >= 12 => {
+            let s=std::net::Ipv4Addr::new(p[0],p[1],p[2],p[3]);
+            let d=std::net::Ipv4Addr::new(p[4],p[5],p[6],p[7]);
+            Ok((SocketAddr::new(s.into(),u16::from_be_bytes([p[8],p[9]])),SocketAddr::new(d.into(),u16::from_be_bytes([p[10],p[11]]))))
+        }
+        0x21 if len >= 36 => {
+            let s=std::net::Ipv6Addr::from(<[u8;16]>::try_from(&p[0..16]).unwrap());
+            let d=std::net::Ipv6Addr::from(<[u8;16]>::try_from(&p[16..32]).unwrap());
+            Ok((SocketAddr::new(s.into(),u16::from_be_bytes([p[32],p[33]])),SocketAddr::new(d.into(),u16::from_be_bytes([p[34],p[35]]))))
+        }
+        _ => Err(io::Error::new(io::ErrorKind::InvalidData, "unsupported PROXY v2 family/protocol or truncated payload")),
+    }
+}
+
+/// Build an outbound PROXY v2 header using the original ingress addresses.
+pub fn stream_proxy_header_addresses(peer: SocketAddr, local: SocketAddr) -> Result<BytesMut, EncodeError> {
+    let header = proxy_protocol::ProxyHeader::Version2 {
+        command: ProxyCommand::Proxy,
+        transport_protocol: ProxyTransportProtocol::Stream,
+        addresses: match (peer,local) {
+            (SocketAddr::V4(source),SocketAddr::V4(destination)) => ProxyAddresses::Ipv4 { source,destination },
+            (SocketAddr::V6(source),SocketAddr::V6(destination)) => ProxyAddresses::Ipv6 { source,destination },
+            _ => unreachable!("PROXY v2 source and destination address families must match"),
+        },
+    };
+    proxy_protocol::encode(header)
+}
 
 /// Proxy the inbound stream to a target address.
 pub async fn proxy(
@@ -16,7 +59,8 @@ pub async fn proxy(
     proxy_header: ProxyHeader,
     addr_target: SocketAddr,
 ) -> Result<(), Box<dyn Error>> {
-    proxy_with_queue(inbound, proxy_header, addr_target, &[]).await
+    let peer=inbound.peer_addr()?; let local=inbound.local_addr()?;
+    proxy_with_queue_addresses(inbound,proxy_header,addr_target,&[],peer,local).await
 }
 
 /// Proxy the inbound stream to a target address.
@@ -28,6 +72,12 @@ pub async fn proxy_with_queue(
     addr_target: SocketAddr,
     queue: &[u8],
 ) -> Result<(), Box<dyn Error>> {
+    let peer=inbound.peer_addr()?; let local=inbound.local_addr()?;
+    proxy_with_queue_addresses(inbound,proxy_header,addr_target,queue,peer,local).await
+}
+
+/// Proxy using the original client and destination addresses from ingress PROXY v2.
+pub async fn proxy_with_queue_addresses(inbound: TcpStream, proxy_header: ProxyHeader, addr_target: SocketAddr, queue: &[u8], peer: SocketAddr, local: SocketAddr) -> Result<(), Box<dyn Error>> {
     // Set up connection to server
     // TODO: on connect fail, ping server and redirect to serve_status if offline
     let mut outbound = TcpStream::connect(addr_target).await?;
@@ -40,7 +90,7 @@ pub async fn proxy_with_queue(
             outbound.write_all(&header).await?;
         }
         ProxyHeader::Proxy => {
-            let header = stream_proxy_header(&inbound)?;
+            let header = stream_proxy_header_addresses(peer,local)?;
             outbound.write_all(&header).await?;
         }
     }

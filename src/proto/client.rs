@@ -11,6 +11,8 @@ use minecraft_protocol::version::v1_14_4::handshake::Handshake;
 pub struct Client {
     /// Client peer address.
     pub peer: SocketAddr,
+    /// Original destination address from the ingress PROXY v2 header.
+    pub proxy_local: Option<SocketAddr>,
 
     /// Current client state.
     pub state: Mutex<ClientState>,
@@ -26,6 +28,7 @@ impl Client {
     pub fn new(peer: SocketAddr) -> Self {
         Self {
             peer,
+            proxy_local: None,
             state: Default::default(),
             compression: AtomicI32::new(-1),
         }
