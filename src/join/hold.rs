@@ -2,7 +2,6 @@ use std::ops::Deref;
 use std::sync::Arc;
 use std::time::Duration;
 use std::net::SocketAddr;
-use std::net::SocketAddr;
 
 use bytes::BytesMut;
 use tokio::net::TcpStream;
@@ -20,8 +19,6 @@ pub async fn occupy(
     server: Arc<Server>,
     inbound: TcpStream,
     inbound_history: &mut BytesMut,
-    peer: SocketAddr,
-    local: SocketAddr,
     peer: SocketAddr,
     local: SocketAddr,
 ) -> Result<MethodResult, ()> {
