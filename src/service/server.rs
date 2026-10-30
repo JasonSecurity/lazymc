@@ -64,7 +64,7 @@ pub async fn service(config: Arc<Config>) -> Result<(), ()> {
 
     // Route all incomming connections
     while let Ok((inbound, _)) = listener.accept().await {
-        tokio::spawn(route(inbound, config.clone(), server.clone()));
+        route(inbound, config.clone(), server.clone());
     }
 
     Ok(())
@@ -72,17 +72,14 @@ pub async fn service(config: Arc<Config>) -> Result<(), ()> {
 
 /// Route inbound TCP stream to correct service, spawning a new task.
 #[inline]
-async fn route(mut inbound: TcpStream, config: Arc<Config>, server: Arc<Server>) {
-    // Parse the trusted ingress PROXY v2 header before Minecraft protocol handling.
-    let (peer,local) = if config.public.proxy_protocol {
-        match proxy::read_proxy_v2(&mut inbound).await {
-            Ok(addresses) => addresses,
-            Err(err) => { warn!(target: "lazymc", "Invalid/missing incoming PROXY v2 header: {}",err); return; }
+fn route(inbound: TcpStream, config: Arc<Config>, server: Arc<Server>) {
+    // Get user peer address
+    let peer = match inbound.peer_addr() {
+        Ok(peer) => peer,
+        Err(err) => {
+            warn!(target: "lazymc", "Connection from unknown peer address, disconnecting: {}", err);
+            return;
         }
-    } else {
-        let peer=match inbound.peer_addr(){Ok(v)=>v,Err(e)=>{warn!(target:"lazymc","Unknown peer address: {}",e);return;}};
-        let local=match inbound.local_addr(){Ok(v)=>v,Err(e)=>{warn!(target:"lazymc","Unknown local address: {}",e);return;}};
-        (peer,local)
     };
 
     // Check ban state, just drop connection if enabled
@@ -96,18 +93,17 @@ async fn route(mut inbound: TcpStream, config: Arc<Config>, server: Arc<Server>)
     let should_proxy =
         !banned && server.state() == server::State::Started && !config.lockout.enabled;
     if should_proxy {
-        route_proxy(inbound, config, peer, local)
+        route_proxy(inbound, config)
     } else {
-        route_status(inbound, config, server, peer, local)
+        route_status(inbound, config, server, peer)
     }
 }
 
 /// Route inbound TCP stream to status server, spawning a new task.
 #[inline]
-fn route_status(inbound: TcpStream, config: Arc<Config>, server: Arc<Server>, peer: SocketAddr, local: SocketAddr) {
+fn route_status(inbound: TcpStream, config: Arc<Config>, server: Arc<Server>, peer: SocketAddr) {
     // When server is not online, spawn a status server
-    let mut client = Client::new(peer);
-    client.proxy_local=Some(local);
+    let client = Client::new(peer);
     let service = status::serve(client, inbound, config, server).map(|r| {
         if let Err(err) = r {
             warn!(target: "lazymc", "Failed to serve status: {:?}", err);
@@ -119,11 +115,12 @@ fn route_status(inbound: TcpStream, config: Arc<Config>, server: Arc<Server>, pe
 
 /// Route inbound TCP stream to proxy, spawning a new task.
 #[inline]
-fn route_proxy(inbound: TcpStream, config: Arc<Config>, peer: SocketAddr, local: SocketAddr) {
+fn route_proxy(inbound: TcpStream, config: Arc<Config>) {
     // When server is online, proxy all
-    let service = proxy::proxy_with_queue_addresses(
-        inbound, ProxyHeader::Proxy.not_none(config.server.send_proxy_v2),
-        config.server.address, &[], peer, local,
+    let service = proxy::proxy(
+        inbound,
+        ProxyHeader::Proxy.not_none(config.server.send_proxy_v2),
+        config.server.address,
     )
     .map(|r| {
         if let Err(err) = r {
@@ -137,11 +134,12 @@ fn route_proxy(inbound: TcpStream, config: Arc<Config>, peer: SocketAddr, local:
 /// Route inbound TCP stream to proxy with queued data, spawning a new task.
 #[inline]
 pub fn route_proxy_queue(inbound: TcpStream, config: Arc<Config>, queue: BytesMut) {
-    let peer=inbound.peer_addr().unwrap(); let local=inbound.local_addr().unwrap();
-    route_proxy_queue_with_addresses(inbound,config,queue,peer,local);
-}
-pub fn route_proxy_queue_with_addresses(inbound: TcpStream,config:Arc<Config>,queue:BytesMut,peer:SocketAddr,local:SocketAddr){
-    route_proxy_address_queue_with_addresses(inbound,ProxyHeader::Proxy.not_none(config.server.send_proxy_v2),config.server.address,queue,peer,local);
+    route_proxy_address_queue(
+        inbound,
+        ProxyHeader::Proxy.not_none(config.server.send_proxy_v2),
+        config.server.address,
+        queue,
+    );
 }
 
 /// Route inbound TCP stream to proxy with given address and queued data, spawning a new task.
@@ -152,13 +150,9 @@ pub fn route_proxy_address_queue(
     addr: SocketAddr,
     queue: BytesMut,
 ) {
-    let peer=inbound.peer_addr().unwrap(); let local=inbound.local_addr().unwrap();
-    route_proxy_address_queue_with_addresses(inbound,proxy_header,addr,queue,peer,local);
-}
-
-pub fn route_proxy_address_queue_with_addresses(inbound:TcpStream,proxy_header:ProxyHeader,addr:SocketAddr,queue:BytesMut,peer:SocketAddr,local:SocketAddr){
+    // When server is online, proxy all
     let service = async move {
-        proxy::proxy_with_queue_addresses(inbound, proxy_header, addr, &queue, peer, local)
+        proxy::proxy_with_queue(inbound, proxy_header, addr, &queue)
             .map(|r| {
                 if let Err(err) = r {
                     warn!(target: "lazymc", "Failed to proxy: {}", err);

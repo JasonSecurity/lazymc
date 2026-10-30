@@ -20,6 +20,16 @@ will read the `PROXY` header with client-IP information. Once read, it will set
 the correct client IP internally and will resume communicating with the client
 normally.
 
+LazyMC can also accept an incoming HAProxy PROXY protocol v2 header from a trusted
+upstream proxy such as Playit.gg. This is separate from sending a PROXY header to
+the Minecraft backend.
+
+Set `public.proxy_protocol = true` to require and consume a valid PROXY v2
+header before LazyMC parses the Minecraft handshake. The original source and
+destination addresses are retained for the backend header. Only enable this
+when all connections arrive through a trusted proxy; otherwise clients could
+forge their reported source IP.
+
 To enable this with lazymc you must do two things:
 - [Modify the lazymc configuration](#configuration)
 - [Install a companion plugin](#server-plugin)
@@ -33,6 +43,9 @@ to `true`.
 
 ```toml
 # -- snip --
+
+[public]
+proxy_protocol = true
 
 [server]
 send_proxy_v2 = true

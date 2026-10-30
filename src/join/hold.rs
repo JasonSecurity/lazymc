@@ -1,6 +1,7 @@
 use std::ops::Deref;
 use std::sync::Arc;
 use std::time::Duration;
+use std::net::SocketAddr;
 
 use bytes::BytesMut;
 use tokio::net::TcpStream;
@@ -18,6 +19,8 @@ pub async fn occupy(
     server: Arc<Server>,
     inbound: TcpStream,
     inbound_history: &mut BytesMut,
+    peer: SocketAddr,
+    local: SocketAddr,
 ) -> Result<MethodResult, ()> {
     trace!(target: "lazymc", "Using hold method to occupy joining client");
 
@@ -28,7 +31,7 @@ pub async fn occupy(
 
     // Start holding, consume client
     if hold(&config, &server).await? {
-        service::server::route_proxy_queue(inbound, config, inbound_history.clone());
+        service::server::route_proxy_queue_with_addresses(inbound, config, inbound_history.clone(), peer, local);
         return Ok(MethodResult::Consumed);
     }
 

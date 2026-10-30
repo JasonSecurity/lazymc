@@ -143,9 +143,6 @@ pub struct Public {
 
     /// Minecraft protocol version hint.
     pub protocol: u32,
-    /// Require incoming HAProxy PROXY protocol v2 from a trusted proxy.
-    #[serde(default)]
-    pub proxy_protocol: bool,
 }
 
 impl Default for Public {
@@ -154,7 +151,6 @@ impl Default for Public {
             address: "0.0.0.0:25565".parse().unwrap(),
             version: proto::PROTO_DEFAULT_VERSION.to_string(),
             protocol: proto::PROTO_DEFAULT_PROTOCOL,
-            proxy_protocol: false,
         }
     }
 }
