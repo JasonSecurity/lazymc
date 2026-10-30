@@ -1,6 +1,5 @@
 use std::sync::Arc;
 use std::net::SocketAddr;
-use std::net::SocketAddr;
 
 use bytes::BytesMut;
 use tokio::net::TcpStream;
@@ -16,8 +15,6 @@ pub async fn occupy(
     config: Arc<Config>,
     inbound: TcpStream,
     inbound_history: &mut BytesMut,
-    peer: SocketAddr,
-    local: SocketAddr,
     peer: SocketAddr,
     local: SocketAddr,
 ) -> Result<MethodResult, ()> {
