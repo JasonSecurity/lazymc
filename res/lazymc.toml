@@ -25,6 +25,10 @@
 # Enable only if every connection reaches LazyMC through that proxy.
 #proxy_protocol = false
 
+# Require incoming HAProxy PROXY protocol v2 headers from a trusted proxy.
+# Enable only if every connection reaches LazyMC through that proxy.
+#proxy_protocol = false
+
 [server]
 # Server address. Internal IP and port of server started by lazymc to proxy to.
 # Port must be different from public port.
